@@ -71,6 +71,9 @@
     textarea::placeholder { color: #71808c; }
     .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 4px 2px 10px; }
     .hint { color: #7f8e99; font-size: 12px; }
+    .mic-button { margin-left: auto; padding: 0 12px; min-height: 42px; border: 1px solid var(--line); border-radius: 11px; color: #b3c0ca; background: #161d24; font-size: 12px; }
+    .mic-button.recording { border-color: #e5736b; color: #ffb4ae; }
+    .mic-button:disabled { opacity: .6; cursor: wait; }
     .primary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 42px; padding: 0 16px; border: 0; border-radius: 11px; color: #10201e; background: var(--accent); font-size: 13px; font-weight: 750; transition: transform .15s, background .15s; }
     .primary:hover:not(:disabled) { transform: translateY(-1px); background: #82e3cf; }
     .primary:disabled { cursor: wait; opacity: .65; }
@@ -178,6 +181,7 @@
       <textarea id="question" name="question" maxlength="4000" placeholder="Ask about your day, your schedule, or anything on your mind…" required></textarea>
       <div class="composer-footer">
         <span class="hint">Enter to send · Shift + Enter for a new line</span>
+        <button class="mic-button" id="mic-button" type="button" aria-pressed="false" title="Dictate with your microphone">🎙 Speak</button>
         <button class="primary" id="submit-button" type="submit"><span>Ask</span><span aria-hidden="true">↗</span></button>
       </div>
     </form>
@@ -498,6 +502,45 @@
       button.addEventListener('click', handler); container.append(button); return button;
     }
 
+    // Strip Markdown symbols so the voice doesn't read "asterisk asterisk".
+    function spokenText(text) {
+      return text.replace(/```[\s\S]*?```/g, ' ').replace(/[#*_`>|~-]{1,}/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ').trim();
+    }
+
+    // Dictation: record, send to /api/transcribe, and put the text in the box for review.
+    const micButton = document.getElementById('mic-button');
+    let recorder = null, recordedChunks = [];
+    async function toggleRecording() {
+      if (recorder) { recorder.stop(); return; }
+      if (!navigator.mediaDevices || !window.MediaRecorder) { micButton.textContent = 'Mic unsupported'; return; }
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+      catch { micButton.textContent = 'Mic blocked'; setTimeout(() => { micButton.textContent = '🎙 Speak'; }, 2500); return; }
+      recordedChunks = [];
+      recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (event) => { if (event.data.size) recordedChunks.push(event.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const type = recorder.mimeType || 'audio/webm';
+        recorder = null;
+        micButton.classList.remove('recording'); micButton.setAttribute('aria-pressed', 'false');
+        micButton.disabled = true; micButton.textContent = 'Transcribing…';
+        try {
+          const response = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': type }, body: new Blob(recordedChunks, { type }) });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || 'Transcription failed.');
+          if (data.text) { input.value = (input.value ? input.value + ' ' : '') + data.text; input.dispatchEvent(new Event('input')); }
+          micButton.textContent = '🎙 Speak';
+        } catch (error) {
+          micButton.textContent = 'Try again'; setTimeout(() => { micButton.textContent = '🎙 Speak'; }, 2500);
+        }
+        micButton.disabled = false; input.focus();
+      };
+      recorder.start();
+      micButton.classList.add('recording'); micButton.setAttribute('aria-pressed', 'true'); micButton.textContent = '⏹ Stop';
+    }
+    micButton.addEventListener('click', toggleRecording);
+
     function showAnswer(card, answerText) {
       card.answer.classList.remove('error');
       if (card.state.textContent === 'Waiting') card.state.textContent = 'Saved';
@@ -507,6 +550,15 @@
         try { await navigator.clipboard.writeText(answerText); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy answer'; }, 1400); }
         catch { copy.textContent = 'Copy unavailable'; }
       });
+      if ('speechSynthesis' in window) {
+        const listen = addAction(card.tools, '🔊 Read aloud', () => {
+          if (speechSynthesis.speaking) { speechSynthesis.cancel(); listen.textContent = '🔊 Read aloud'; return; }
+          const utterance = new SpeechSynthesisUtterance(spokenText(answerText));
+          utterance.onend = utterance.onerror = () => { listen.textContent = '🔊 Read aloud'; };
+          listen.textContent = '⏹ Stop';
+          speechSynthesis.speak(utterance);
+        });
+      }
     }
 
     async function askAssistant(question, card, conversationId) {

@@ -10,6 +10,7 @@ from typing import Literal
 
 from openai import APIError, OpenAI
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,7 @@ from backend.conversations import (
     set_integration_permission,
 )
 from backend.email_agent import run_email_agent
+from backend.speech import MAX_AUDIO_BYTES, transcribe_audio
 from backend.google_oauth import (
     ACCOUNT_SCOPES,
     CALENDAR_SCOPES,
@@ -578,3 +580,25 @@ def email_chat(request: ChatRequest) -> ChatResponse:
         ) from error
 
     return ChatResponse(answer=answer)
+
+
+@app.post("/api/transcribe")
+async def transcribe(request: Request) -> dict[str, str]:
+    """Turn one short recording (raw audio request body) into text for the chat box."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Recording is too large.")
+    audio = await request.body()
+    client = get_model_client()
+    try:
+        text = await run_in_threadpool(
+            transcribe_audio, client, audio, request.headers.get("content-type")
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except APIError as error:
+        _log_model_error(error)
+        raise HTTPException(
+            status_code=502, detail="Speech-to-text failed. Try again in a moment."
+        ) from error
+    return {"text": text}

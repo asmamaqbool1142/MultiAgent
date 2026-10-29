@@ -64,3 +64,11 @@
 - **Gotchas:** Threading needs both the `threadId` and matching `Message-ID` headers, and Gmail ignores `threadId` if the subject differs. The tool only accepts IDs that `search_gmail` returned in the same request, is capped at 3 drafts per request, and is idempotent per message. Drafts only: sending still needs a separate, explicit request.
 - **Files touched:** `backend/email_tools.py` (search now returns `message_id`/`thread_id`; new `create_reply_draft`), `backend/email_agent.py` (new tool, prompt rules, per-request guards), `tests/test_reply_draft.py`, `pyproject.toml`, `README.md`, `LEARNING.md`.
 - **Verification:** 4 unit tests with a fake Gmail service pass in the container (`docker compose run --rm app sh -c "pip install -q pytest && python -m pytest tests"`). A live end-to-end run needs your Google connection and Groq key.
+
+## Phase 5 — Voice: speech-to-text and read-aloud
+
+- **Concept:** Two different directions with different tools. *Dictation* (audio → text) needs a model, so the browser records with `MediaRecorder`, posts the raw audio to `/api/transcribe`, and the backend calls Groq's Whisper (`whisper-large-v3-turbo`, override with `GROQ_STT_MODEL`). *Read aloud* (text → audio) uses the browser's built-in `speechSynthesis`, so it needs no key, server code or network.
+- **Why here:** It reuses the existing Groq key and keeps the API key out of the browser. The transcript goes into the text box instead of being sent, so you can fix mistakes before the assistant acts on them — important because the assistant can create drafts and events.
+- **Gotchas:** Browsers only allow the microphone on `localhost` or HTTPS. Recorders emit `audio/webm;codecs=opus` (Chrome/Firefox) or `audio/mp4` (Safari), so the backend ignores codec parameters and allowlists types. Uploads are capped at 10 MB. Audio leaves your machine for Groq; read-aloud voices depend on the OS/browser. The raw-body endpoint avoids needing `python-multipart`.
+- **Files touched:** `backend/speech.py`, `backend/main.py` (`POST /api/transcribe`), `frontend/index.html` (🎙 Speak button, 🔊 Read aloud action), `tests/test_speech.py`, `LEARNING.md`.
+- **Verification:** 8 tests pass in the container; the endpoint rejects a non-audio type with HTTP 400 and reaches Groq for audio-typed data. Actual microphone capture needs a browser — not tested by me.
