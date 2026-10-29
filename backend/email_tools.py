@@ -99,6 +99,8 @@ def search_gmail(service: Any, query: str, max_results: int = 5) -> dict[str, An
             }
             emails.append(
                 {
+                    "message_id": message_id,
+                    "thread_id": message.get("threadId"),
                     "from": _header_value(headers, "from", 250),
                     "to": _header_value(headers, "to", 250),
                     "subject": _header_value(headers, "subject", 250) or "(no subject)",
@@ -254,13 +256,75 @@ def update_gmail_draft(
     return {"updated": True, "draft_id": draft.get("id")}
 
 
-def _raw_message(recipient: str, subject: str, body: str) -> str:
+def create_reply_draft(service: Any, message_id: str, body: str) -> dict[str, Any]:
+    """Create a draft reply in the original message's thread without sending it.
+
+    The recipient, subject and threading headers come from the original message
+    fetched here, never from the model, so a draft cannot be redirected by text
+    inside an email.
+    """
+    if not re.fullmatch(r"[0-9A-Za-z]{1,64}", message_id or ""):
+        raise ValueError("Provide a message_id returned by search_gmail.")
+    try:
+        response = service.get(
+            f"{GMAIL_API}/messages/{message_id}",
+            params={
+                "format": "metadata",
+                "metadataHeaders": ["From", "Reply-To", "Subject", "Message-ID", "References"],
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        original = response.json()
+    except requests.RequestException as error:
+        _raise_gmail_write_error(error, "read the message to reply to")
+    headers = {
+        header.get("name", "").lower(): header.get("value", "")
+        for header in original.get("payload", {}).get("headers", [])
+    }
+    _, recipient = parseaddr(headers.get("reply-to") or headers.get("from", ""))
+    subject = " ".join(headers.get("subject", "").split())
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject or '(no subject)'}"
+    parent_id = " ".join(headers.get("message-id", "").split())
+    references = " ".join(f"{headers.get('references', '')} {parent_id}".split())
+    raw = _raw_message(
+        recipient,
+        subject[:250],
+        body,
+        {"In-Reply-To": parent_id, "References": references[:2000]} if parent_id else None,
+    )
+    thread_id = original.get("threadId")
+    message: dict[str, Any] = {"raw": raw}
+    if thread_id:
+        message["threadId"] = thread_id
+    try:
+        response = service.post(f"{GMAIL_API}/drafts", json={"message": message}, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as error:
+        _raise_gmail_write_error(error, "create the reply draft")
+    draft = response.json()
+    return {
+        "created": True,
+        "draft_id": draft.get("id"),
+        "to": recipient,
+        "subject": subject[:250],
+        "in_thread": bool(thread_id),
+    }
+
+
+def _raw_message(
+    recipient: str, subject: str, body: str, extra_headers: dict[str, str] | None = None
+) -> str:
     """Validate fields and encode a plain-text Gmail message."""
     validate_gmail_message(recipient, subject, body)
     _, parsed_address = parseaddr(recipient)
     message = EmailMessage()
     message["To"] = parsed_address
     message["Subject"] = subject.strip()
+    for name, value in (extra_headers or {}).items():
+        if value and "\n" not in value and "\r" not in value:
+            message[name] = value
     message.set_content(body.strip())
     return base64.urlsafe_b64encode(message.as_bytes()).decode("ascii").rstrip("=")
 

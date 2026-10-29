@@ -72,3 +72,13 @@ Enable the Gmail API in the same Google Cloud project as the OAuth client. In Go
 Open the dashboard and enable the desired permissions. The Email Agent searches up to five matching messages and sends short message excerpts to Groq to answer your question. If **Send email on explicit request** is enabled, it can send a plain-text message only when directly instructed and given a recipient, subject, and body. It cannot delete, archive, label, or edit existing messages. Its direct endpoint is `POST http://127.0.0.1:8001/api/email/chat`.
 
 Calendar events are created only on the primary calendar, without attendees or notifications. The direct endpoint is `POST http://127.0.0.1:8001/api/calendar/events`; it requires an explicit title, RFC3339 start and end times, and an IANA timezone. Duplicate title/start combinations are skipped.
+
+## Reply drafts
+
+With **Manage drafts and send email** enabled, ask the assistant things like "Check my unread emails and draft replies to any that need one". It saves threaded reply drafts in Gmail Drafts (at most three per request), skips newsletters and no-reply senders, and shows you each draft. It never sends unless you separately ask. Recipients are taken from the original message, not from model output.
+
+## Tests
+
+```bash
+docker compose run --rm app sh -c "pip install -q pytest && python -m pytest tests"
+```

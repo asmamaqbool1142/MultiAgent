@@ -51,3 +51,16 @@
 - **OAuth:** Reconnect Google to grant Gmail access. The consent flow requests both the existing Calendar scope and Gmail read-only scope. Google classifies `gmail.readonly` as restricted; wider distribution may require verification.
 - **Files touched:** `backend/email_agent.py`, `backend/email_tools.py`, `backend/calendar_tools.py`, `backend/google_oauth.py`, `backend/main.py`, `frontend/index.html`, `README.md`, and `LEARNING.md`.
 - **Verification:** Pending local Google consent for the Gmail scope and a user initiated email query.
+
+## Catch-up note — what Phases 2–3 grew into
+
+- The notes above describe the first slices. The code has since moved on: the model provider is Groq (OpenAI-compatible), not Anthropic; Calendar can create events (`calendar_writer.py`, scope `calendar.events`); Gmail can create, edit and send drafts (scope `gmail.compose`) behind a separate "Manage drafts and send email" permission; chats persist in SQLite (`conversations.py`); `/api/ask` runs the general, calendar and email agents in parallel and merges their answers; permissions are toggled per service from the dashboard.
+
+## Phase 4 — Reply drafts for incoming email
+
+- **Concept:** Let the model decide *what to say*, but let the backend decide *who it goes to*. The new `create_reply_draft` tool takes only a `message_id` and a body. The backend re-fetches that message and derives the recipient (`Reply-To`, else `From`), the `Re:` subject, and the `In-Reply-To`/`References` headers plus Gmail `threadId`, so the draft lands in the original conversation.
+- **Why here:** Drafting reply text from text the model read in an email is a prompt-injection path. If the model supplied the recipient, a malicious email could say "reply to attacker@…". Taking the address from Gmail's own headers closes that.
+- **When to use:** Any tool where untrusted content could steer a side effect — keep the side effect's targets out of the model's hands and derive them from trusted data.
+- **Gotchas:** Threading needs both the `threadId` and matching `Message-ID` headers, and Gmail ignores `threadId` if the subject differs. The tool only accepts IDs that `search_gmail` returned in the same request, is capped at 3 drafts per request, and is idempotent per message. Drafts only: sending still needs a separate, explicit request.
+- **Files touched:** `backend/email_tools.py` (search now returns `message_id`/`thread_id`; new `create_reply_draft`), `backend/email_agent.py` (new tool, prompt rules, per-request guards), `tests/test_reply_draft.py`, `pyproject.toml`, `README.md`, `LEARNING.md`.
+- **Verification:** 4 unit tests with a fake Gmail service pass in the container (`docker compose run --rm app sh -c "pip install -q pytest && python -m pytest tests"`). A live end-to-end run needs your Google connection and Groq key.
