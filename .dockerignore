@@ -1,0 +1,10 @@
+.git
+.env
+client_secret*.json
+credentials.json
+token.json
+.venv
+__pycache__
+*.py[cod]
+data
+chroma_db

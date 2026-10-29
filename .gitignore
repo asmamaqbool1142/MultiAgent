@@ -1,0 +1,22 @@
+# Local credentials and configuration
+.env
+client_secret*.json
+credentials.json
+token.json
+
+# Python environment and generated files
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Local document and vector database data can contain private information
+data/
+chroma_db/
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/

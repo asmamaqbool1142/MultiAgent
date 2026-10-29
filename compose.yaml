@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "127.0.0.1:${APP_PORT:-8001}:8000"
+    env_file:
+      - path: .env
+        required: false

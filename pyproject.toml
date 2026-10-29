@@ -1,0 +1,16 @@
+[project]
+name = "personal-assistant-dashboard"
+version = "0.1.0"
+description = "A learning project for a personal multi-agent assistant dashboard"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "google-auth-oauthlib>=1.2,<2",
+    "openai>=1.50,<3",
+    "uvicorn[standard]>=0.30,<1",
+    "tzdata>=2024.1",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
