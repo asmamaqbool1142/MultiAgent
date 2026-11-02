@@ -507,6 +507,44 @@
       return text.replace(/```[\s\S]*?```/g, ' ').replace(/[#*_`>|~-]{1,}/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ').trim();
     }
 
+    // Chrome on Linux loads voices late and silently stops long utterances, so
+    // pick a voice explicitly and read in short chunks.
+    function getVoices() {
+      return new Promise((resolve) => {
+        const now = speechSynthesis.getVoices();
+        if (now.length) return resolve(now);
+        const timer = setTimeout(() => resolve(speechSynthesis.getVoices()), 1500);
+        speechSynthesis.addEventListener('voiceschanged', () => { clearTimeout(timer); resolve(speechSynthesis.getVoices()); }, { once: true });
+      });
+    }
+    async function readAloud(text, button) {
+      const label = '🔊 Read aloud';
+      const voices = await getVoices();
+      if (!voices.length) { button.textContent = 'No voices installed'; setTimeout(() => { button.textContent = label; }, 3500); return; }
+      const lang = (navigator.language || 'en-US').toLowerCase();
+      const voice = voices.find((v) => v.lang.toLowerCase() === lang && v.localService) || voices.find((v) => v.lang.toLowerCase().startsWith(lang.slice(0, 2))) || voices[0];
+      const chunks = text.match(/[^.!?\n]+[.!?]*/g) || [text];
+      const pieces = [];
+      for (const sentence of chunks) {
+        const last = pieces[pieces.length - 1];
+        if (last && last.length + sentence.length < 180) pieces[pieces.length - 1] += sentence; else pieces.push(sentence);
+      }
+      speechSynthesis.cancel();
+      button.textContent = '⏹ Stop';
+      let failed = false;
+      pieces.forEach((piece, index) => {
+        const utterance = new SpeechSynthesisUtterance(piece.trim());
+        utterance.voice = voice; utterance.lang = voice.lang;
+        utterance.onerror = (event) => { if (event.error !== 'canceled' && event.error !== 'interrupted') failed = true; };
+        if (index === pieces.length - 1) utterance.onend = () => {
+          button.textContent = failed ? 'Voice failed' : label;
+          if (failed) setTimeout(() => { button.textContent = label; }, 3500);
+        };
+        speechSynthesis.speak(utterance);
+      });
+      speechSynthesis.resume();
+    }
+
     // Dictation: record, send to /api/transcribe, and put the text in the box for review.
     const micButton = document.getElementById('mic-button');
     let recorder = null, recordedChunks = [];
@@ -552,11 +590,8 @@
       });
       if ('speechSynthesis' in window) {
         const listen = addAction(card.tools, '🔊 Read aloud', () => {
-          if (speechSynthesis.speaking) { speechSynthesis.cancel(); listen.textContent = '🔊 Read aloud'; return; }
-          const utterance = new SpeechSynthesisUtterance(spokenText(answerText));
-          utterance.onend = utterance.onerror = () => { listen.textContent = '🔊 Read aloud'; };
-          listen.textContent = '⏹ Stop';
-          speechSynthesis.speak(utterance);
+          if (speechSynthesis.speaking || speechSynthesis.pending) { speechSynthesis.cancel(); listen.textContent = '🔊 Read aloud'; return; }
+          readAloud(spokenText(answerText), listen);
         });
       }
     }
