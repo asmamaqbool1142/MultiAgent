@@ -1,0 +1,23 @@
+# Render Blueprint: free web service. Accounts and chats live in a free Neon Postgres
+# (DATABASE_URL), because Render's free disk is wiped on every restart.
+services:
+  - type: web
+    name: personal-assistant
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL        # Neon connection string
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI # https://<service>.onrender.com/auth/google/callback
+        sync: false
+      - key: ALLOWED_EMAILS      # who may sign up; empty means anyone
+        sync: false
+      - key: APP_TIMEZONE
+        value: Asia/Karachi

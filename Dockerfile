@@ -9,4 +9,5 @@ RUN python -m pip install --no-cache-dir .
 
 COPY . .
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+# Hosts like Render pass the port in $PORT; locally it stays 8000.
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]

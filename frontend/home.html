@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10151b">
+  <title>Personal Assistant</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #10151b;
+      --panel: #171e26;
+      --panel-raised: #1d2630;
+      --line: #2b3743;
+      --text: #eef3f7;
+      --muted: #9aa9b7;
+      --accent: #69d5be;
+      --danger: #ff9b9b;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: var(--text); background: radial-gradient(ellipse at 68% -14%, #23343b 0, transparent 36rem), var(--page); }
+    button, input { font: inherit; }
+    a { color: var(--accent); }
+    .shell { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 24px 0 56px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 700; }
+    .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; color: #10201e; background: var(--accent); font-size: 18px; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 420px); gap: 56px; align-items: center; padding: 64px 0 40px; }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 12px 0 16px; font-size: clamp(34px, 5vw, 54px); line-height: 1.05; letter-spacing: -.02em; }
+    .lede { max-width: 34rem; margin: 0; color: var(--muted); font-size: 17px; line-height: 1.6; }
+    .card { padding: 26px; border: 1px solid var(--line); border-radius: 18px; background: #141b22e6; box-shadow: 0 24px 60px #0006; }
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 20px; border-radius: 11px; background: #0f151a; }
+    .tab { padding: 9px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; font-weight: 650; cursor: pointer; }
+    .tab[aria-selected="true"] { color: var(--text); background: var(--panel-raised); }
+    .google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 11px; border: 1px solid #52616b; border-radius: 11px; color: var(--text); background: var(--panel-raised); font-weight: 600; text-decoration: none; cursor: pointer; }
+    .google:hover { border-color: var(--accent); }
+    .divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 12px; }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+    label { display: block; margin-bottom: 14px; color: #c3cdd4; font-size: 13px; font-weight: 600; }
+    input { width: 100%; margin-top: 6px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: #0f151a; }
+    input:focus { outline: 2px solid #69d5be66; border-color: var(--accent); }
+    .hint { margin: -6px 0 14px; color: var(--muted); font-size: 12px; }
+    .submit { width: 100%; padding: 12px; border: 0; border-radius: 11px; color: #10201e; background: var(--accent); font-weight: 700; cursor: pointer; }
+    .submit:disabled { opacity: .6; cursor: wait; }
+    .error { min-height: 20px; margin: 0 0 12px; color: var(--danger); font-size: 13px; }
+    .signed-in { text-align: center; }
+    .signed-in p { color: var(--muted); }
+    .features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding-top: 24px; }
+    .feature { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: #141b2299; }
+    .feature h3 { margin: 0 0 8px; font-size: 15px; }
+    .feature p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    footer { margin-top: 40px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    [hidden] { display: none !important; }
+    @media (max-width: 820px) {
+      .hero { grid-template-columns: 1fr; gap: 32px; padding-top: 40px; }
+      .features { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">✦</span>Personal Assistant</div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Your day, handled</div>
+          <h1>An assistant that knows your calendar and your inbox.</h1>
+          <p class="lede">Ask about your schedule, summarize email, draft replies, and book events, by typing or by voice. You choose exactly which Google data it can touch, and you can switch any of it off.</p>
+        </div>
+
+        <div class="card" id="auth-card">
+          <div id="signed-in" class="signed-in" hidden>
+            <h2 style="margin-top:0">Welcome back</h2>
+            <p id="signed-in-email"></p>
+            <button class="submit" id="open-app" type="button">Open dashboard</button>
+          </div>
+
+          <div id="forms">
+            <div class="tabs" role="tablist">
+              <button class="tab" role="tab" id="tab-login" aria-selected="true" type="button">Log in</button>
+              <button class="tab" role="tab" id="tab-signup" aria-selected="false" type="button">Sign up</button>
+            </div>
+
+            <a class="google" id="google-button" href="/auth/sso/google/start" hidden>
+              <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z"/><path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.9-6.1a24 24 0 0 0 0 21.6l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.1 1.4-4.9 2.3-8.2 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+              Continue with Google
+            </a>
+            <div class="divider" id="divider" hidden>or use email</div>
+
+            <form id="auth-form" novalidate>
+              <label id="name-field" hidden>Name <small>(optional)</small>
+                <input id="name" name="name" type="text" autocomplete="name" maxlength="80">
+              </label>
+              <label>Email
+                <input id="email" name="email" type="email" autocomplete="email" required maxlength="254">
+              </label>
+              <label>Password
+                <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="128">
+              </label>
+              <p class="hint" id="password-hint" hidden>At least 8 characters.</p>
+              <p class="error" id="error" role="alert"></p>
+              <button class="submit" id="submit" type="submit">Log in</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="features" aria-label="What it does">
+        <div class="feature"><h3>Calendar</h3><p>See what's coming up, find free time, and create or move events in plain language.</p></div>
+        <div class="feature"><h3>Email</h3><p>Summarize your latest messages and draft threaded replies. Nothing is sent unless you ask.</p></div>
+        <div class="feature"><h3>Voice</h3><p>Dictate questions with your microphone and have answers read back to you.</p></div>
+      </section>
+    </main>
+
+    <footer>Each account has its own chats and its own Google connection. Your data is never shared with other users.</footer>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let mode = 'login';
+
+    function setMode(next) {
+      mode = next;
+      const signup = mode === 'signup';
+      $('tab-login').setAttribute('aria-selected', String(!signup));
+      $('tab-signup').setAttribute('aria-selected', String(signup));
+      $('name-field').hidden = !signup;
+      $('password-hint').hidden = !signup;
+      $('password').autocomplete = signup ? 'new-password' : 'current-password';
+      $('submit').textContent = signup ? 'Create account' : 'Log in';
+      $('error').textContent = '';
+    }
+    $('tab-login').addEventListener('click', () => setMode('login'));
+    $('tab-signup').addEventListener('click', () => setMode('signup'));
+    $('open-app').addEventListener('click', () => { location.href = '/app'; });
+
+    $('auth-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const email = $('email').value.trim(), password = $('password').value;
+      if (!email || !password) { $('error').textContent = 'Enter your email and password.'; return; }
+      $('submit').disabled = true; $('error').textContent = '';
+      try {
+        const body = { email, password };
+        if (mode === 'signup') body.name = $('name').value;
+        const response = await fetch(`/api/auth/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Check your details and try again.');
+        location.href = '/app';
+      } catch (error) {
+        $('error').textContent = error.message;
+        $('submit').disabled = false;
+      }
+    });
+
+    // Show the dashboard shortcut when already signed in, and the Google button only when it's configured.
+    (async () => {
+      const params = new URLSearchParams(location.search);
+      if (params.get('error')) { $('error').textContent = params.get('error'); history.replaceState(null, '', '/'); }
+      try {
+        const data = await (await fetch('/api/auth/me')).json();
+        if (data.google_sso) { $('google-button').hidden = false; $('divider').hidden = false; }
+        if (data.user) {
+          $('forms').hidden = true; $('signed-in').hidden = false;
+          $('signed-in-email').textContent = data.user.email;
+        }
+      } catch { /* leave the forms usable */ }
+    })();
+  </script>
+</body>
+</html>

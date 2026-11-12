@@ -1,5 +1,6 @@
 """Reusable HTTP API for the personal assistant clients."""
 
+import contextvars
 import logging
 import os
 import re
@@ -9,11 +10,15 @@ from pathlib import Path
 from typing import Literal
 
 from openai import APIError, OpenAI
+from urllib.parse import unquote
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from backend.auth import initialize_auth
+from backend.auth_routes import auth_middleware, router as auth_router
 from backend.agent import run_agent, synthesize_agent_answers
 from backend.calendar_agent import run_calendar_agent
 from backend.calendar_writer import run_calendar_writer
@@ -35,6 +40,7 @@ from backend.conversations import (
     save_turn,
     set_integration_permission,
 )
+from backend.documents import MAX_DOCUMENT_BYTES, extract_text, summarize_document
 from backend.email_agent import run_email_agent
 from backend.speech import MAX_AUDIO_BYTES, transcribe_audio
 from backend.google_oauth import (
@@ -51,11 +57,16 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Personal Assistant API", version="0.1.0")
-FRONTEND_PATH = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
+app.middleware("http")(auth_middleware)
+app.include_router(auth_router)
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+FRONTEND_PATH = FRONTEND_DIR / "index.html"
+HOME_PATH = FRONTEND_DIR / "home.html"
 
 
 @app.on_event("startup")
 def startup() -> None:
+    initialize_auth()
     initialize_conversations()
 
 
@@ -97,8 +108,14 @@ def is_calendar_write_request(message: str) -> bool:
 
 
 @app.get("/", include_in_schema=False)
+def homepage() -> FileResponse:
+    """Public landing page with login, signup and Google sign-in."""
+    return FileResponse(HOME_PATH)
+
+
+@app.get("/app", include_in_schema=False)
 def dashboard() -> FileResponse:
-    """Serve the browser dashboard."""
+    """Serve the dashboard; the auth middleware redirects visitors who aren't signed in."""
     return FileResponse(FRONTEND_PATH)
 
 
@@ -413,7 +430,11 @@ def ask_all_agents(request: ChatRequest) -> ChatResponse:
     successful_answers = 0
     email_processing_error: str | None = None
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-        futures = [executor.submit(function, *arguments) for _, function, arguments in tasks]
+        # Each worker needs the request's context so it sees the signed-in user.
+        futures = [
+            executor.submit(contextvars.copy_context().run, function, *arguments)
+            for _, function, arguments in tasks
+        ]
         for (name, _, _), future in zip(tasks, futures):
             try:
                 answer = future.result()
@@ -602,3 +623,37 @@ async def transcribe(request: Request) -> dict[str, str]:
             status_code=502, detail="Speech-to-text failed. Try again in a moment."
         ) from error
     return {"text": text}
+
+
+@app.post("/api/summarize-document", response_model=ChatResponse)
+async def summarize_uploaded_document(
+    request: Request, conversation_id: str | None = None
+) -> ChatResponse:
+    """Summarize one uploaded file (raw request body, name in X-Filename) into the chat thread."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="File is too large; keep it under 10 MB.")
+    filename = unquote(request.headers.get("x-filename", "")).strip()[:120] or "document"
+    data = await request.body()
+    client = get_model_client()
+    if conversation_id is not None and get_conversation(conversation_id) is None:
+        raise HTTPException(status_code=404, detail="Chat thread not found.")
+    try:
+        text = await run_in_threadpool(extract_text, filename, data)
+        answer = await run_in_threadpool(summarize_document, client, filename, text)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except APIError as error:
+        _log_model_error(error)
+        raise HTTPException(
+            status_code=502, detail="The assistant could not summarize this file. Try again."
+        ) from error
+    except RuntimeError as error:
+        logger.error("Document summary stopped (%s).", type(error).__name__)
+        raise HTTPException(
+            status_code=502, detail="The assistant could not complete this summary."
+        ) from error
+    if conversation_id is None:
+        conversation_id = create_conversation()["id"]
+    save_turn(conversation_id, f"Summarize the file: {filename}", answer)
+    return ChatResponse(answer=answer, conversation_id=conversation_id)

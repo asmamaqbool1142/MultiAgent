@@ -1,5 +1,6 @@
 """Small, local OAuth flow for read-only Google Calendar and Gmail access."""
 
+import json
 import os
 import logging
 import time
@@ -7,6 +8,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from google_auth_oauthlib.flow import Flow
+
+from backend.auth import current_user_id, load_google_token, save_google_token
 
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar.events.readonly"]
 CALENDAR_WRITE_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
@@ -20,13 +23,42 @@ SERVICE_SCOPES = {
     "email_send": GMAIL_WRITE_SCOPES,
 }
 GOOGLE_SCOPES = ACCOUNT_SCOPES + CALENDAR_SCOPES + CALENDAR_WRITE_SCOPES + GMAIL_SCOPES
-TOKEN_PATH = Path(os.getenv("GOOGLE_TOKEN_PATH", "data/google_calendar_token.json"))
+# Pre-accounts installs kept one token in this file; claim_legacy_token() moves it
+# into the database for the first account.
+LEGACY_TOKEN_PATH = Path(os.getenv("GOOGLE_TOKEN_PATH", "data/google_calendar_token.json"))
 OAUTH_STATE_TTL_SECONDS = 600
 
 # The app is a single local Docker service, so short-lived flow state can live
 # in memory. Expiration and one-time removal prevent stale callbacks being reused.
-_pending_flows: dict[str, tuple[Flow, float, str]] = {}
+_pending_flows: dict[str, tuple[Flow, float, str, str]] = {}
 logger = logging.getLogger(__name__)
+
+
+def _uid() -> str:
+    user_id = current_user_id.get()
+    if not user_id:
+        raise PermissionError("Sign in required.")
+    return user_id
+
+
+def load_token_info() -> dict | None:
+    """The signed-in user's saved Google credentials, or None if never connected."""
+    raw = load_google_token(_uid())
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def save_token(token_json: str) -> None:
+    save_google_token(_uid(), token_json)
+
+
+def claim_legacy_token(user_id: str) -> None:
+    """Move the pre-accounts token file to the first user so they stay connected."""
+    if LEGACY_TOKEN_PATH.is_file():
+        save_google_token(user_id, LEGACY_TOKEN_PATH.read_text(encoding="utf-8"))
+        LEGACY_TOKEN_PATH.unlink()
 
 
 def _oauth_error_code(error: Exception) -> str | None:
@@ -69,7 +101,7 @@ def _new_flow(scopes: list[str], state: str | None = None) -> Flow:
 def start_google_oauth(service: str = "all") -> str:
     """Return a consent URL and retain its state until the callback arrives."""
     now = time.time()
-    for old_state, (_, expires_at, _) in list(_pending_flows.items()):
+    for old_state, (_, expires_at, _, _) in list(_pending_flows.items()):
         if expires_at <= now:
             del _pending_flows[old_state]
 
@@ -77,12 +109,13 @@ def start_google_oauth(service: str = "all") -> str:
         raise ValueError("Unknown Google permission service.")
     requested = GOOGLE_SCOPES if service == "all" else ACCOUNT_SCOPES + SERVICE_SCOPES[service]
     # Preserve scopes already granted when Google performs incremental consent.
-    if TOKEN_PATH.is_file():
+    info = load_token_info()
+    if info:
         try:
             from google.oauth2.credentials import Credentials
-            existing = Credentials.from_authorized_user_file(str(TOKEN_PATH)).scopes or []
+            existing = Credentials.from_authorized_user_info(info).scopes or []
             requested = list(dict.fromkeys([*requested, *existing]))
-        except (OSError, ValueError):
+        except ValueError:
             pass
     flow = _new_flow(requested)
     authorization_url, state = flow.authorization_url(
@@ -90,17 +123,12 @@ def start_google_oauth(service: str = "all") -> str:
         include_granted_scopes="true",
         prompt="select_account consent" if service == "all" else "consent",
     )
-    _pending_flows[state] = (flow, now + OAUTH_STATE_TTL_SECONDS, service)
+    _pending_flows[state] = (flow, now + OAUTH_STATE_TTL_SECONDS, service, current_user_id.get())
     return authorization_url
 
 
-def complete_google_oauth(authorization_response: str, state: str) -> str:
-    """Validate a one-time state value, exchange the code, and store the token."""
-    pending = _pending_flows.pop(state, None)
-    if not state or pending is None or pending[1] <= time.time():
-        raise ValueError("Google sign-in expired or state did not match; start again.")
-
-    flow = pending[0]
+def fetch_token(flow: Flow, authorization_response: str) -> None:
+    """Exchange Google's one-time code, raising ValueError with a user-safe message."""
     redirect = urlsplit(flow.redirect_uri)
     allow_local_http = (
         redirect.scheme == "http"
@@ -131,8 +159,18 @@ def complete_google_oauth(authorization_response: str, state: str) -> str:
             else:
                 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = previous_insecure_transport
 
-    credentials = flow.credentials
-    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(credentials.to_json(), encoding="utf-8")
-    TOKEN_PATH.chmod(0o600)
+
+def complete_google_oauth(authorization_response: str, state: str) -> str:
+    """Validate a one-time state value, exchange the code, and store the token."""
+    pending = _pending_flows.pop(state, None)
+    if (
+        not state
+        or pending is None
+        or pending[1] <= time.time()
+        or pending[3] != current_user_id.get()
+    ):
+        raise ValueError("Google sign-in expired or state did not match; start again.")
+
+    fetch_token(pending[0], authorization_response)
+    save_token(pending[0].credentials.to_json())
     return pending[2]

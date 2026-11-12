@@ -12,7 +12,7 @@ from google.oauth2.credentials import Credentials
 import requests
 
 from backend.conversations import get_integration_permission
-from backend.google_oauth import CALENDAR_SCOPES, TOKEN_PATH
+from backend.google_oauth import CALENDAR_SCOPES, load_token_info, save_token
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +37,15 @@ def get_google_service(required_scopes: list[str], service_name: str) -> Any:
         raise CalendarNotConnectedError(
             f"Google {service_name} access is turned off in Assistant permissions."
         )
-    if not TOKEN_PATH.is_file():
+    info = load_token_info()
+    if info is None:
         raise CalendarNotConnectedError(
             f"Google {service_name} is not connected. Complete Google sign-in first."
         )
 
     try:
-        credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH))
-    except (OSError, ValueError) as error:
+        credentials = Credentials.from_authorized_user_info(info)
+    except ValueError as error:
         raise CalendarNotConnectedError(
             "Saved Google credentials could not be read. Connect again."
         ) from error
@@ -64,8 +65,7 @@ def get_google_service(required_scopes: list[str], service_name: str) -> Any:
             raise CalendarNotConnectedError(
                 f"Google {service_name} access could not be refreshed. Reconnect Google."
             ) from error
-        TOKEN_PATH.write_text(credentials.to_json(), encoding="utf-8")
-        TOKEN_PATH.chmod(0o600)
+        save_token(credentials.to_json())
 
     if not credentials.valid:
         raise CalendarNotConnectedError(
@@ -77,11 +77,12 @@ def get_google_service(required_scopes: list[str], service_name: str) -> Any:
 
 def google_token_has_scopes(required_scopes: list[str]) -> bool:
     """Check granted scopes from the saved token without exposing token contents."""
-    if not TOKEN_PATH.is_file():
+    info = load_token_info()
+    if info is None:
         return False
     try:
-        credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH))
-    except (OSError, ValueError):
+        credentials = Credentials.from_authorized_user_info(info)
+    except ValueError:
         return False
     return credentials.has_scopes(required_scopes)
 

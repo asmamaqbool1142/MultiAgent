@@ -71,6 +71,8 @@
     textarea::placeholder { color: #71808c; }
     .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 4px 2px 10px; }
     .hint { color: #7f8e99; font-size: 12px; }
+    #attach-button { margin-left: auto; }
+    #attach-button + .mic-button { margin-left: 0; }
     .mic-button { margin-left: auto; padding: 0 12px; min-height: 42px; border: 1px solid var(--line); border-radius: 11px; color: #b3c0ca; background: #161d24; font-size: 12px; }
     .mic-button.recording { border-color: #e5736b; color: #ffb4ae; }
     .mic-button:disabled { opacity: .6; cursor: wait; }
@@ -149,6 +151,7 @@
         <span class="pill" id="calendar-status"><span class="dot"></span><span>Checking Calendar</span></span>
         <span class="pill account-pill" id="google-account">Google account not connected</span>
         <button class="connect-button" id="connect-google" type="button">Connect Google account</button>
+        <button class="connect-button" id="sign-out" type="button">Sign out</button>
         <details class="permission-menu" id="permission-menu">
           <summary>Permissions</summary>
           <div class="permission-panel">
@@ -181,6 +184,8 @@
       <textarea id="question" name="question" maxlength="4000" placeholder="Ask about your day, your schedule, or anything on your mind…" required></textarea>
       <div class="composer-footer">
         <span class="hint">Enter to send · Shift + Enter for a new line</span>
+        <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md,.csv,.json,.log,.rtf,.html,.xml,.yaml,.yml" hidden>
+        <button class="mic-button" id="attach-button" type="button" title="Attach a PDF, Word or text file to summarize">📎 Attach</button>
         <button class="mic-button" id="mic-button" type="button" aria-pressed="false" title="Dictate with your microphone">🎙 Speak</button>
         <button class="primary" id="submit-button" type="submit"><span>Ask</span><span aria-hidden="true">↗</span></button>
       </div>
@@ -204,6 +209,18 @@
   </main>
 
   <script>
+    // A lapsed session sends the person back to the login page instead of showing raw errors.
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await nativeFetch(...args);
+      if (response.status === 401 && !String(args[0]).startsWith('/api/auth/')) location.href = '/';
+      return response;
+    };
+    document.getElementById('sign-out').addEventListener('click', async () => {
+      await nativeFetch('/api/auth/logout', { method: 'POST' });
+      location.href = '/';
+    });
+
     const form = document.querySelector('#ask-form');
     const input = document.querySelector('#question');
     const submitButton = document.querySelector('#submit-button');
@@ -517,6 +534,7 @@
         speechSynthesis.addEventListener('voiceschanged', () => { clearTimeout(timer); resolve(speechSynthesis.getVoices()); }, { once: true });
       });
     }
+    let reading = false; // our own flag: speechSynthesis.speaking can stay stuck true on Linux Chrome
     async function readAloud(text, button) {
       const label = '🔊 Read aloud';
       const voices = await getVoices();
@@ -530,13 +548,16 @@
         if (last && last.length + sentence.length < 180) pieces[pieces.length - 1] += sentence; else pieces.push(sentence);
       }
       speechSynthesis.cancel();
+      await new Promise((resolve) => setTimeout(resolve, 150)); // Chrome drops speak() issued right after cancel()
+      reading = true;
       button.textContent = '⏹ Stop';
       let failed = false;
       pieces.forEach((piece, index) => {
         const utterance = new SpeechSynthesisUtterance(piece.trim());
         utterance.voice = voice; utterance.lang = voice.lang;
-        utterance.onerror = (event) => { if (event.error !== 'canceled' && event.error !== 'interrupted') failed = true; };
+        utterance.onerror = (event) => { if (index === pieces.length - 1) reading = false; if (event.error !== 'canceled' && event.error !== 'interrupted') failed = true; };
         if (index === pieces.length - 1) utterance.onend = () => {
+          reading = false;
           button.textContent = failed ? 'Voice failed' : label;
           if (failed) setTimeout(() => { button.textContent = label; }, 3500);
         };
@@ -590,7 +611,7 @@
       });
       if ('speechSynthesis' in window) {
         const listen = addAction(card.tools, '🔊 Read aloud', () => {
-          if (speechSynthesis.speaking || speechSynthesis.pending) { speechSynthesis.cancel(); listen.textContent = '🔊 Read aloud'; return; }
+          if (reading) { reading = false; speechSynthesis.cancel(); listen.textContent = '🔊 Read aloud'; return; }
           readAloud(spokenText(answerText), listen);
         });
       }
@@ -648,6 +669,38 @@
       submitButton.disabled = false;
       submitButton.firstElementChild.textContent = 'Ask';
       input.focus();
+    });
+
+    // Document summary: upload a file, get an overview and key details in the thread.
+    const attachButton = document.getElementById('attach-button');
+    const fileInput = document.getElementById('file-input');
+    attachButton.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      if (file.size > 10 * 1024 * 1024) { window.alert('File is too large; keep it under 10 MB.'); return; }
+      attachButton.disabled = true; submitButton.disabled = true;
+      const empty = results.querySelector('.placeholder');
+      if (empty) empty.remove();
+      if (!currentConversationId) await createThread();
+      const card = appendRound(`📎 Summarize: ${file.name}`);
+      card.answer.textContent = 'Reading and summarizing…';
+      try {
+        const data = await apiRequest(`/api/summarize-document?conversation_id=${encodeURIComponent(currentConversationId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+          body: file,
+        });
+        showAnswer(card, data.answer);
+        card.state.textContent = 'Done';
+        await loadThreads();
+      } catch (error) {
+        card.answer.classList.add('error');
+        card.answer.textContent = error.message || 'Could not summarize this file.';
+        card.state.textContent = 'Could not answer';
+      }
+      attachButton.disabled = false; submitButton.disabled = false;
     });
 
     newChatButton.addEventListener('click', createThread);
