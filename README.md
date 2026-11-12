@@ -1,3 +1,13 @@
+---
+title: Personal Assistant Dashboard
+emoji: 🗓️
+colorFrom: gray
+colorTo: blue
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # Personal Assistant Dashboard
 
 A personal learning project: a Python API with a simple browser interface, built in small phases.
